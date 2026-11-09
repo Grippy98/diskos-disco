@@ -1,5 +1,10 @@
 <h1 align="center">diskOS Disco!</h1>
 
+> **Progressive lyrics fork — `codex/lyrics-motion`:** smooth line movement, Enhanced LRC word highlights,
+> and tap-to-seek in Lyrics and Immersive. Toggle **Settings > Display > Text & layout > Progressive lyrics**.
+> Custom build: **3.4.4 lyrics-motion.1**. [Behavior, build and test details](docs/UI.md#progressive-lyrics-development-build).
+> The existing release links and checked-in payload below remain upstream 3.4.4; build this branch for the new features.
+
 > `dev` is experimental. Use tagged releases. [Dev notes](docs/DEV.md)
 
 **3.4.4:** battery life back to 3.4.1: large fonts are stored uncompressed again. [Release notes](docs/releases/v3.4.4.md) · [Bluetooth](docs/BLUETOOTH.md) · [Changelog](CHANGELOG.md)

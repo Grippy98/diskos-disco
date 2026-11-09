@@ -14,6 +14,9 @@ permissions:
 
 jobs:
   release:
+    # Fork custom builds are published from separately verified release assets.
+    # This workflow packages the checked-in upstream payload, not those builds.
+    if: github.repository == 'zmd22/diskos-disco'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -1,16 +1,15 @@
 <h1 align="center">diskOS Disco!</h1>
 
-> **SMB download fix — `codex/smb-download-fix`:** includes the committed progressive lyrics changes below,
-> plus an SD-card save fallback for older FAT/exFAT drivers and specific SMB/card error messages.
-> Test build: **3.4.4 lyrics-smb.2** also adds **Estimate word timing** for line-timed lyrics in Lyrics and Immersive,
-> and keeps lyric motion steady when the player repeats rounded playback positions. Estimated timing is approximate;
-> exact Enhanced LRC word timing takes precedence. Both lyrics settings are under **Display > Text & layout**.
+> **Fork release: [3.4.4 lyrics-smb.2](https://github.com/Grippy98/diskos-disco/releases/tag/custom-3.4.4-lyrics-smb.2)** — progressive lyrics, tap-to-seek,
+> optional estimated word highlighting in Lyrics and Immersive, and an SMB save fix for older FAT/exFAT drivers.
+> The owner has confirmed this build works on a Disc. Exact Enhanced LRC word timing takes precedence over
+> estimates; both lyrics settings are under **Settings > Display > Text & layout** and default to on.
+> Download the custom `mq_ui`, matching build manifest, checksums and signed SD bundle from the fork release.
+> The signed bundle requires the original owner's installed signing trust; other owners must sign `mq_ui`
+> with their own existing keys. See the release's installation notes before copying the update.
 > [Lyrics behavior](docs/UI.md#progressive-lyrics-development-build) · [SMB save behavior and limits](docs/DISC_SHELF_INSTALL.md#smb-save-compatibility-in-this-fork).
-
-> **Progressive lyrics fork — `codex/lyrics-motion`:** smooth line movement, Enhanced LRC word highlights,
-> and tap-to-seek in Lyrics and Immersive. Toggle **Settings > Display > Text & layout > Progressive lyrics**.
-> Custom build: **3.4.4 lyrics-motion.1**. [Behavior, build and test details](docs/UI.md#progressive-lyrics-development-build).
-> The existing release links and checked-in payload below remain upstream 3.4.4; build this branch for the new features.
+> The checked-in `payload/mq_ui` and upstream download links below remain upstream 3.4.4. Use the fork release
+> above for this custom firmware; its exact binary source is commit `e4e415b52313daed4b48cdc20b360d9e406124da`.
 
 > `dev` is experimental. Use tagged releases. [Dev notes](docs/DEV.md)
 

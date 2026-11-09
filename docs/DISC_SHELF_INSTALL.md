@@ -35,6 +35,29 @@ Requires SMB3 with encryption; no SMB1/2 fallback. Plain folder browser: no arti
 Selecting a folder includes its subtree, layout preserved. Remote links are skipped. Over-long paths, deep trees or
 oversized listings fail rather than truncate.
 
+### SMB save compatibility in this fork
+
+The `codex/smb-download-fix` branch adds **3.4.4 lyrics-smb.1**, including the earlier progressive lyrics work.
+The original save step could transfer a whole file and then fail: older FAT/exFAT drivers support neither
+the requested no-replace rename nor hard links. The worker then deleted its temporary file and replaced the
+underlying error with a generic SMB error.
+
+The new fallback exclusively creates a new destination and copies the already-verified temporary file into it,
+then flushes it before recording success. Existing files, including names created during the transfer, are never
+replaced by this fallback. The progress page shows **Saving … to SD…** during that step. Errors now identify
+the failed operation, such as reading from SMB, writing to SD, or saving the finished file; cleanup preserves the
+original failure message.
+
+On these older filesystems the final local copy needs space for a second copy of the current file plus the normal
+reserve. The filename is visible while saving. Normal cancellation and I/O failures remove the new partial file;
+a sudden power loss can leave an incomplete file that is not recorded as downloaded. Inspect/remove that specific
+incomplete file before retrying; unrecorded files are deliberately not overwritten automatically.
+
+Host validation covers complete encrypted SMB3.0/3.1.1 transfers against Samba, including 3, 21, 33 and 65 MiB files,
+matching SHA-256 hashes, repeated downloads, and injected unsupported filesystem operations. Dedicated sanitizer
+tests cover exclusive creation, collisions, cancellation, short reads/writes, failed flushes and low space.
+This does not replace a test against the user's TrueNAS and physical Disc/card.
+
 ## File names
 
 Navidrome: `Artist/YYYY - Album/NN. Track name.ext` (e.g. `Björk/1997 - Homogenic/01. Hunter.flac`). Missing year

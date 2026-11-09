@@ -1,5 +1,9 @@
 <h1 align="center">diskOS Disco!</h1>
 
+> **SMB download fix — `codex/smb-download-fix`:** includes the committed progressive lyrics changes below,
+> plus an SD-card save fallback for older FAT/exFAT drivers and specific SMB/card error messages.
+> Test build: **3.4.4 lyrics-smb.1**. [SMB save behavior and limits](docs/DISC_SHELF_INSTALL.md#smb-save-compatibility-in-this-fork).
+
 > **Progressive lyrics fork — `codex/lyrics-motion`:** smooth line movement, Enhanced LRC word highlights,
 > and tap-to-seek in Lyrics and Immersive. Toggle **Settings > Display > Text & layout > Progressive lyrics**.
 > Custom build: **3.4.4 lyrics-motion.1**. [Behavior, build and test details](docs/UI.md#progressive-lyrics-development-build).

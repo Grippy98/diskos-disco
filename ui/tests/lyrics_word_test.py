@@ -10,6 +10,7 @@ import tempfile
 app = Path(__file__).resolve().parents[1]
 source = r'''
 #include <assert.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,7 +60,104 @@ static void invariants(int n) {
         }
     }
 }
+static void estimates(void) {
+    int n = parse("[00:01]a bb ccc\n[00:07.003]last line", 128);
+    char original[4096]; memcpy(original, text, sizeof text);
+    assert(lrc_estimate_words(lines, n, text, sizeof text, words, 128, &wc, 0) == 1);
+    assert(wc == 3 && lines[1].word_count == 0);
+    check_word(0, 0, 1000, 2001, 0, 1, "a");
+    check_word(0, 1, 2001, 4002, 2, 4, "bb");
+    check_word(0, 2, 4002, 7003, 5, 8, "ccc");
+    assert(!memcmp(text, original, sizeof text));
+    /* Repeated invocation does not replace or duplicate any existing spans. */
+    lrc_word_t saved[128]; memcpy(saved, words, sizeof words);
+    assert(lrc_estimate_words(lines, n, text, sizeof text, words, 128, &wc, -1) == 0);
+    assert(!memcmp(saved, words, sizeof words));
+    assert(lrc_estimate_words(lines, n, text, sizeof text, words, 128, &wc, 9003) == 1);
+    assert(lines[1].word_count == 2 && word(1, 1).end_ms == 9003);
+    invariants(n);
+
+    n = parse("[00:01]<00:01>exact <00:01.2>timing\n[00:02]estimated words\n[00:04]tail", 128);
+    int exact_count = wc; memcpy(saved, words, sizeof words);
+    assert(lrc_estimate_words(lines, n, text, sizeof text, words, 128, &wc, 0) == 1);
+    assert(lines[0].word_count == exact_count && !memcmp(saved, words, (size_t)exact_count * sizeof *words));
+    assert(word(0, 1).end_ms == -1); /* Unspecified exact tail remains exact/unknown. */
+    assert(lines[1].word_count == 2 && lines[2].word_count == 0);
+
+    /* Enhanced input retains provenance even if its exact spans exceeded the
+     * parser's capacity, or a subsequent tag was invalid. Never replace it. */
+    n = parse("[00:01][00:03]<00:01>a<00:01.2>b<00:01.4>c\n[00:05]ordinary\n[00:06]tail", 1);
+    assert(wc == 0 && lines[0].has_word_timing && lines[1].has_word_timing);
+    assert(!lines[2].has_word_timing && !lines[3].has_word_timing);
+    assert(lrc_estimate_words(lines, n, text, sizeof text, words, 128, &wc, 0) == 1);
+    assert(!lines[0].word_count && !lines[1].word_count && lines[2].word_count == 1);
+    n = parse("[00:01]<00:01>a<00:99>b\n[00:03]tail", 128);
+    assert(lines[0].has_word_timing && !lines[0].word_count);
+    assert(!lrc_estimate_words(lines, n, text, sizeof text, words, 128, &wc, 0));
+
+    n = parse("[offset:+250]\n[00:01][00:01][00:03]é 界\n[00:05]tail", 128);
+    assert(lrc_estimate_words(lines, n, text, sizeof text, words, 128, &wc, 0) == 3);
+    check_word(0, 0, 750, 1750, 0, 2, "é");
+    check_word(0, 1, 1750, 2750, 3, 6, "界");
+    check_word(1, 0, 750, 1750, 0, 2, "é");
+    check_word(2, 1, 3750, 4750, 3, 6, "界");
+    invariants(n);
+
+    /* Unicode scalars, not encoded bytes, determine weights. Composed and
+     * decomposed accents have identical weight and remain intact in spans. */
+    const char unicode[] = "e\xCC\x81 \xC3\xA9";
+    assert(lrc_estimate_line_words(unicode, sizeof unicode, 1000, 3000, words, 128) == 2);
+    assert(words[0].start_byte == 0 && words[0].end_byte == 3 && words[0].end_ms == 2000);
+    assert(words[1].start_byte == 4 && words[1].end_byte == 6 && words[1].start_ms == 2000);
+    const char spaces[] = " \t\xC3\xA9\xC2\xA0\xE7\x95\x8C\xE3\x80\x80\r\n";
+    assert(lrc_estimate_line_words(spaces, sizeof spaces, 0, 2000, words, 128) == 2);
+    assert(words[0].start_byte == 2 && words[0].end_byte == 4 && words[0].end_ms == 1000);
+    assert(words[1].start_byte == 6 && words[1].end_byte == 9 && words[1].end_ms == 2000);
+    const char joiner[] = "\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x92\xBB hello";
+    assert(lrc_estimate_line_words(joiner, sizeof joiner, 0, 1000, words, 128) == 2);
+    assert(words[0].start_byte == 0 && words[0].end_byte == 11 && words[1].start_byte == 12);
+
+    memset(words, 0xA5, sizeof words); memcpy(saved, words, sizeof words);
+    const char *invalid[] = {"\x80", "\xC0\xAF", "\xED\xA0\x80", "\xF4\x90\x80\x80", "ok \xE2\x82"};
+    for(unsigned i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
+        assert(!lrc_estimate_line_words(invalid[i], (int)strlen(invalid[i]) + 1, 0, 1000, words, 128));
+        assert(!memcmp(saved, words, sizeof words));
+    }
+    const char no_nul[] = {'a', 'b'};
+    assert(!lrc_estimate_line_words(no_nul, sizeof no_nul, 0, 1000, words, 128));
+    assert(!lrc_estimate_line_words("one two", 8, 0, 1000, words, 1));
+    assert(!lrc_estimate_line_words("one two", 8, 0, 1, words, 128));
+    assert(!lrc_estimate_line_words("one", 4, -1, 1000, words, 128));
+    assert(!lrc_estimate_line_words("one", 4, 1000, 1000, words, 128));
+    assert(!lrc_estimate_line_words("one", 4, 1000, -1, words, 128));
+    assert(!lrc_estimate_line_words(" \t", 3, 0, 1000, words, 128));
+    assert(!memcmp(saved, words, sizeof words));
+    assert(lrc_estimate_line_words("a b", 4, LONG_MAX - 20, LONG_MAX, words, 2) == 2);
+    assert(words[0].start_ms == LONG_MAX - 20 && words[0].end_ms == LONG_MAX - 10 && words[1].end_ms == LONG_MAX);
+    assert(lrc_estimate_line_words("a bb ccc", 9, 0, LONG_MAX, words, 3) == 3);
+    assert(words[0].end_ms > 0 && words[1].end_ms > words[0].end_ms && words[2].end_ms == LONG_MAX);
+
+    n = parse("[00:01]too many words\n[00:02]ok\n[00:03]tail", 128);
+    assert(lrc_estimate_words(lines, n, text, sizeof text, words, 1, &wc, 0) == 1);
+    assert(!lines[0].word_count && lines[1].word_count == 1 && wc == 1);
+    n = parse("[00:01]first\n[00:02]second", 128);
+    lines[1].ms = 0;
+    assert(!lrc_estimate_words(lines, n, text, sizeof text, words, 128, &wc, 4000));
+    assert(wc == 0 && !lines[0].word_count && !lines[1].word_count);
+    n = parse("untimed plain lyrics", 128);
+    assert(!lrc_estimate_words(lines, n, text, sizeof text, words, 128, &wc, 4000));
+    /* Every UTF-8 prefix uses a true allocation boundary; incomplete scalars
+     * must decline the estimate without writing past any input/output buffer. */
+    for(size_t i = 0; i <= strlen(joiner); i++) {
+        char *prefix = malloc(i + 1); assert(prefix);
+        memcpy(prefix, joiner, i); prefix[i] = 0;
+        (void)lrc_estimate_line_words(prefix, (int)i + 1, 0, 1000, words, 2);
+        free(prefix);
+    }
+    puts("PASS: optional estimated words, exact precedence, Unicode/combining/whitespace byte spans, duplicate times, known/unknown tail, bounded capacity and overflow");
+}
 int main(void) {
+    estimates();
     int n = parse("[00:01]<00:01> Hello  <00:02.25>world<00:03>\n[00:05]next", 128);
     assert(n == 2 && synced && wc == 2 && lines[0].word_count == 2);
     assert(!strcmp(text + lines[0].text, "Hello world"));

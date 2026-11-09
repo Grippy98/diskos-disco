@@ -3,6 +3,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "imm_record.h"
 #include "lyrics_fx.h"
+#include "lrc_estimate.h"
 #include "null_theme.h"
 /* Copyright (C) 2026 diskOS contributors */
 #include "ui.h"
@@ -149,6 +150,9 @@ static int imm_vol_last = -1;
 static lv_color_t np_acc; static int np_acc_set; static char np_acc_path[520];
 static lyr_line_t g_lyr[240]; static int g_lyr_n = -1; static char g_lyr_path[520];
 static int imm_lyric_cur=-2,imm_lyric_transition,imm_progressive=-1;
+static int imm_estimate_words=-1;
+static long imm_estimate_duration;
+static lrc_word_t imm_estimated_words[LYR_WORDS_MAX];
 static lyrics_fx_t imm_word_fx;
 static unsigned imm_word_pos_seq;
 static long imm_word_pos_base,imm_word_pos;
@@ -1032,7 +1036,15 @@ static void imm_lyrics_reload(void){
     static unsigned revision;
     unsigned now;
     int progressive=simple_cfg_get_int("lyrics_progressive",1)!=0;
-    if(progressive!=imm_progressive){imm_progressive=progressive;imm_lyric_reset();}
+    int estimate=simple_cfg_get_int("lyrics_estimate_words",1)!=0;
+    track_state_t st;ipc_get_state(&st);
+    long duration=st.have_track&&st.duration_ms>0?st.duration_ms:0;
+    int end_changed=progressive&&estimate&&imm_lyric_cur>=0&&imm_lyric_cur==g_lyr_n-1&&
+        !g_lyr[imm_lyric_cur].word_count&&!g_lyr[imm_lyric_cur].estimate_blocked&&duration!=imm_estimate_duration;
+    if(progressive!=imm_progressive||estimate!=imm_estimate_words||end_changed){
+        imm_progressive=progressive;imm_estimate_words=estimate;imm_lyric_reset();
+    }
+    imm_estimate_duration=duration;
     if(!imm_lyrics_on()){                                   /* Immersive Lyrics off: just the cover, no shade */
         if(g_lyr_n == 0 && imm_fade_height == 0) return;
         imm_lyric_reset();g_lyr_n = 0; revision = 0;
@@ -1076,12 +1088,26 @@ static void imm_words_tick(void){
         if(imm_word_pos_at&&g_np_is_playing&&imm_word_was_playing){imm_word_elapsed+=now-imm_word_pos_at;if(imm_word_elapsed>1500)imm_word_elapsed=1500;}
         imm_word_pos=imm_seek_target+(long)imm_word_elapsed;
     }else{
-        if(!imm_word_pos_at||st.pos_seq!=imm_word_pos_seq||st.position_ms!=imm_word_pos_base){
-            if(imm_word_pos_at&&labs(st.position_ms-imm_word_pos)>1600)imm_position_jump=1;
-            imm_word_pos_seq=st.pos_seq;imm_word_pos_base=st.position_ms;imm_word_elapsed=0;
-        }else if(g_np_is_playing&&imm_word_was_playing){
+        int advancing=imm_word_pos_at&&g_np_is_playing&&imm_word_was_playing;
+        if(advancing){
             imm_word_elapsed+=now-imm_word_pos_at;if(imm_word_elapsed>1500)imm_word_elapsed=1500;
         }
+        long predicted=imm_word_pos_base+(long)imm_word_elapsed;
+        /* a1 may repeat a quantized position with a fresh sequence number.
+         * Rebasing on that sequence rewinds the lyric clock across fractional
+         * line boundaries. Only changed positions anchor the clock; while
+         * playing, a modest forward report may catch up without moving the
+         * display backwards. Raw decreases still represent backward seeks. */
+        if(!imm_word_pos_at||st.position_ms!=imm_word_pos_base){
+            int backward=imm_word_pos_at&&st.position_ms<imm_word_pos_base;
+            long correction=labs(st.position_ms-predicted);
+            if(imm_word_pos_at&&(backward||correction>1600))imm_position_jump=1;
+            int keep=advancing&&!backward&&predicted>st.position_ms&&correction<=1600;
+            imm_word_pos_base=st.position_ms;
+            imm_word_elapsed=keep?(uint32_t)(predicted-st.position_ms):0;
+            if(imm_word_elapsed>1500)imm_word_elapsed=1500;
+        }
+        imm_word_pos_seq=st.pos_seq;
         imm_word_pos=imm_word_pos_base+(long)imm_word_elapsed;
     }
     imm_word_pos_at=now;imm_word_was_playing=g_np_is_playing;
@@ -1180,7 +1206,19 @@ static void imm_tick(lv_timer_t *t){
     imm_lyric_offsets[3]=0;imm_lyric_opacity[3]=0;
     if(imm_ghost)lv_obj_align(imm_ghost,LV_ALIGN_TOP_MID,0,imm_lyric_y[3]);
     imm_lyric_cur=cur;imm_lyric_transition=sequential;
-    if(imm_progressive&&cur>=0&&g_lyr[cur].word_count&&lyrics_fx_bind(&imm_word_fx,imm_lyr[1],g_lyr[cur].words,g_lyr[cur].word_count,TC(FIXED_MEDIA_LYRIC_CURRENT))){
+    const lrc_word_t *words=NULL;int count=0;
+    if(cur>=0){
+        words=g_lyr[cur].words;count=g_lyr[cur].word_count;
+        if(imm_progressive&&imm_estimate_words&&!count&&!g_lyr[cur].estimate_blocked){
+            long end=imm_estimate_duration;
+            for(int i=cur+1;i<g_lyr_n;i++)if(g_lyr[i].ms>g_lyr[cur].ms){end=g_lyr[i].ms;break;}
+            if(imm_estimate_duration>0&&end>imm_estimate_duration)end=imm_estimate_duration;
+            count=lrc_estimate_line_words(g_lyr[cur].text,sizeof g_lyr[cur].text,g_lyr[cur].ms,end,
+                imm_estimated_words,LYR_WORDS_MAX);
+            words=imm_estimated_words;
+        }
+    }
+    if(imm_progressive&&count>0&&lyrics_fx_bind(&imm_word_fx,imm_lyr[1],words,count,TC(FIXED_MEDIA_LYRIC_CURRENT))){
         lv_obj_set_style_text_color(imm_lyr[1],TC(FIXED_MEDIA_LYRIC_ADJACENT),0);
         lyrics_fx_set_draw(&imm_word_fx,!imm_fast);lyrics_fx_update(&imm_word_fx,imm_word_pos);
     }

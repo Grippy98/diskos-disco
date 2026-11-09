@@ -2,7 +2,10 @@
 
 > **SMB download fix — `codex/smb-download-fix`:** includes the committed progressive lyrics changes below,
 > plus an SD-card save fallback for older FAT/exFAT drivers and specific SMB/card error messages.
-> Test build: **3.4.4 lyrics-smb.1**. [SMB save behavior and limits](docs/DISC_SHELF_INSTALL.md#smb-save-compatibility-in-this-fork).
+> Test build: **3.4.4 lyrics-smb.2** also adds **Estimate word timing** for line-timed lyrics in Lyrics and Immersive,
+> and keeps lyric motion steady when the player repeats rounded playback positions. Estimated timing is approximate;
+> exact Enhanced LRC word timing takes precedence. Both lyrics settings are under **Display > Text & layout**.
+> [Lyrics behavior](docs/UI.md#progressive-lyrics-development-build) · [SMB save behavior and limits](docs/DISC_SHELF_INSTALL.md#smb-save-compatibility-in-this-fork).
 
 > **Progressive lyrics fork — `codex/lyrics-motion`:** smooth line movement, Enhanced LRC word highlights,
 > and tap-to-seek in Lyrics and Immersive. Toggle **Settings > Display > Text & layout > Progressive lyrics**.

@@ -30,7 +30,14 @@ highlighting. The separate Screen transitions setting disables line movement wit
 Tap a visible timed lyric line to jump to its timestamp in either mode; swipes and long presses do not seek.
 Pause stays paused after a seek. In Immersive, tap outside the lyrics to reveal playback controls as before.
 
-Normal LRC files supply line timing only. For a word sweep, use Enhanced LRC with inline word timestamps, for example:
+**Estimate word timing**, in the same settings section, adds an approximate word sweep to line-only LRC lyrics
+when Progressive lyrics is on. It is on by default in this custom build. Words share the interval until the next
+later line timestamp, weighted by their character lengths. This is a visual estimate and can differ from the
+singer's timing; it does not analyze the audio. Blank timed lines still mark pauses. The last line uses the known
+track end, or keeps whole-line highlighting if the track end is unknown. Turning the setting off immediately
+restores exact-timing-only highlights in both views without changing the lyric files or downloading them again.
+
+Exact Enhanced LRC word timestamps always take priority over estimates. For example:
 
 ```text
 [00:01.00]<00:01.00>Follow <00:02.00>the <00:02.50>light<00:04.00>
@@ -41,8 +48,12 @@ The next explicit inline timestamp marks the end of a word or phrase. Without a 
 span highlights at its start rather than inventing its duration. Malformed timings, unsupported layout, or
 capacity limits fall back to the whole line. Immersive accepts up to 24 timed spans per displayed line and drops
 word timing if its shorter display text would truncate a timed span. Untimed lyrics remain readable text.
-This does not add lyrics downloads from Apple Music or infer missing word timing. Existing local, embedded,
-and optional online lyric sources are retained.
+Estimates use a separate, bounded scratch buffer and never replace parsed word timestamps. Lines whose exact
+timestamps cannot be used, or whose Immersive display text is truncated, keep whole-line highlighting instead
+of receiving estimates. Capacity or layout limits also fall back to the whole line. Untimed lyrics without
+line timestamps are not estimated.
+This does not add lyrics downloads from Apple Music. Existing local, embedded, and optional online lyric sources
+are retained.
 
 The device is software-rendered at 360×360. Glyph bounds are cached on line changes; per-frame work updates
 positions and highlight clips. Immersive reuses cached text snapshots in its compositor. Device frame pacing

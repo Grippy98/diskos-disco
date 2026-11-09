@@ -759,11 +759,108 @@ static void motion_press(lv_obj_t *o){
     nav_pointer=(lv_indev_data_t){.point=motion_center(o),.state=LV_INDEV_STATE_PRESSED};nav_wait(30);
 }
 static void motion_release(void){nav_pointer.state=LV_INDEV_STATE_RELEASED;nav_wait(50);}
+static void review_estimated_lyrics(const char *out){
+    const char *estimated="Estimated words flow across this line";
+    const char *exact="Exact timed words";
+    const char *rejected="Rejected source timing stays whole";
+    const char *capped="a b c d e f g h i j k l m n o p q r s t u v w x y";
+    const char *last="Final words need a known end";
+    char body[2048];int used=snprintf(body,sizeof body,
+        "[00:01.00]Estimated words flow across this line\n"
+        "[00:06.00]<00:06.00>Exact <00:07.50>timed <00:09.00>words<00:11.00>\n"
+        "[00:11.00]<00:12.00>Rejected source <00:11.00>timing stays whole\n[00:16.00]");
+    for(int i=0;i<25;i++)used+=snprintf(body+used,sizeof body-(size_t)used,
+        "<00:%02d.%02d>%c%s",16+i/10,(i%10)*10,'a'+i,i==24?"":" ");
+    used+=snprintf(body+used,sizeof body-(size_t)used,"<00:19.00>\n[00:21.00]Final words need a known end\n");
+    assert(used>0&&(size_t)used<sizeof body);motion_sidecar(body);
+    setenv("NP_PLAYING","0",1);test_track_state.state=1;test_track_state.duration_ms=28000;
+    ui_update(&test_track_state);screen_set_anim(0);
+    cfg_set_int_deferred("lyrics_progressive",1);cfg_set_int_deferred("lyrics_estimate_words",1);
+    motion_position(1400);lyrics_open();lv_obj_t *label=motion_wait_text(estimated);
+    lv_obj_t *root=screen_get_root(SCR_LYRICS);char a[33],b[33];
+    lyr_line_t source[6];unsigned revision;
+    assert(lyrics_immersive_load(source,6,&revision)==5);
+    assert(!source[0].word_count&&source[1].word_count==3&&!source[2].word_count&&!source[3].word_count&&!source[4].word_count);
+    assert(source[2].estimate_blocked&&source[3].estimate_blocked);
+    motion_label_hash(label,a);motion_frame(out,"estimated-standalone-early");
+    motion_position(4000);nav_wait(100);motion_label_hash(label,b);assert(strcmp(a,b));
+    motion_frame(out,"estimated-standalone-late");
+
+    /* Disable estimates in-place: line-only text stops sweeping, exact spans remain. */
+    cfg_set_int_deferred("lyrics_estimate_words",0);lyrics_poll(NULL);nav_wait(100);
+    motion_position(1400);nav_wait(100);motion_label_hash(label,a);
+    motion_position(4000);nav_wait(100);motion_label_hash(label,b);assert(!strcmp(a,b));
+    motion_position(6400);nav_wait(100);label=find_text(root,exact);assert(label);motion_label_hash(label,a);
+    motion_position(7200);nav_wait(100);motion_label_hash(label,b);assert(strcmp(a,b));
+    lv_indev_t *input=lv_indev_create();lv_indev_set_type(input,LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(input,nav_read);lv_indev_set_long_press_time(input,400);
+    lv_timer_set_period(lv_indev_get_read_timer(input),10);
+    motion_position(1400);nav_wait(100);label=find_text(root,estimated);assert(label);
+    int seeks=scrub_seek_calls;nav_touch_object(label,80);
+    assert(scrub_seek_calls==seeks+1&&scrub_last_seek==1000);motion_position(1000);nav_wait(100);
+
+    cfg_set_int_deferred("lyrics_estimate_words",1);cfg_set_int_deferred("lyrics_progressive",0);
+    lyrics_poll(NULL);motion_position(1400);nav_wait(100);motion_label_hash(label,a);
+    motion_position(4000);nav_wait(100);motion_label_hash(label,b);assert(!strcmp(a,b));
+    cfg_set_int_deferred("lyrics_progressive",1);lyrics_poll(NULL);
+    /* Rejected exact timing must never silently become guessed timing. */
+    motion_position(11400);nav_wait(100);label=find_text(root,rejected);assert(label);motion_label_hash(label,a);
+    motion_position(14000);nav_wait(100);motion_label_hash(label,b);assert(!strcmp(a,b));
+    /* Standalone retains this valid25-span line; Immersive has a24-span limit. */
+    motion_position(16400);nav_wait(100);label=find_text(root,capped);assert(label);motion_label_hash(label,a);
+    motion_position(18200);nav_wait(100);motion_label_hash(label,b);assert(strcmp(a,b));
+    test_track_state.duration_ms=0;ui_update(&test_track_state);
+    motion_position(22000);nav_wait(100);label=find_text(root,last);assert(label);motion_label_hash(label,a);
+    motion_position(24000);nav_wait(100);motion_label_hash(label,b);assert(!strcmp(a,b));
+    /* A duration learned after opening supplies a bounded final-line interval. */
+    test_track_state.duration_ms=25000;ui_update(&test_track_state);
+    motion_position(22000);nav_wait(100);motion_label_hash(label,a);
+    motion_position(24000);nav_wait(100);motion_label_hash(label,b);assert(strcmp(a,b));
+
+    test_track_state.duration_ms=28000;ui_update(&test_track_state);motion_position(1400);
+    simple_cfg_set_int_deferred("imm_style",0);
+    if(th_disco_family()||th_null())disco_open_np_immersive();
+    else {screen_show(SCR_NOWPLAYING);ui_np_fsart_open();}
+    for(int i=0;i<100;i++){lyrics_poll(NULL);nav_wait(10);usleep(1000);}
+    root=ui_action_find("imm.control");assert(root&&ui_np_fsart_active());
+    label=find_text(root,estimated);assert(label);motion_label_hash(label,a);
+    motion_frame(out,"estimated-immersive-early");
+    motion_position(4000);nav_wait(300);motion_label_hash(label,b);assert(strcmp(a,b));
+    motion_frame(out,"estimated-immersive-late");
+    cfg_set_int_deferred("lyrics_estimate_words",0);ui_imm_style_apply();nav_wait(300);
+    motion_position(1400);nav_wait(300);label=find_text(root,estimated);assert(label);motion_label_hash(label,a);
+    motion_position(4000);nav_wait(300);motion_label_hash(label,b);assert(!strcmp(a,b));
+    motion_position(6400);nav_wait(300);label=find_text(root,exact);assert(label);motion_label_hash(label,a);
+    motion_position(7200);nav_wait(300);motion_label_hash(label,b);assert(strcmp(a,b));
+    motion_position(1400);nav_wait(300);label=find_text(root,estimated);assert(label);
+    seeks=scrub_seek_calls;nav_touch_object(label,80);
+    assert(scrub_seek_calls==seeks+1&&scrub_last_seek==1000);motion_position(1000);nav_wait(300);
+
+    cfg_set_int_deferred("lyrics_estimate_words",1);cfg_set_int_deferred("lyrics_progressive",0);
+    ui_imm_style_apply();motion_position(1400);nav_wait(300);label=find_text(root,estimated);assert(label);
+    motion_label_hash(label,a);motion_position(4000);nav_wait(300);motion_label_hash(label,b);assert(!strcmp(a,b));
+    cfg_set_int_deferred("lyrics_progressive",1);ui_imm_style_apply();
+    motion_position(11400);nav_wait(300);label=find_text(root,rejected);assert(label);motion_label_hash(label,a);
+    motion_position(14000);nav_wait(300);motion_label_hash(label,b);assert(!strcmp(a,b));
+    motion_position(16400);nav_wait(300);label=find_text(root,capped);assert(label);motion_label_hash(label,a);
+    motion_position(18200);nav_wait(300);motion_label_hash(label,b);assert(!strcmp(a,b));
+    test_track_state.duration_ms=0;ui_update(&test_track_state);
+    motion_position(22000);nav_wait(300);label=find_text(root,last);assert(label);motion_label_hash(label,a);
+    motion_position(24000);nav_wait(300);motion_label_hash(label,b);assert(!strcmp(a,b));
+    test_track_state.duration_ms=25000;ui_update(&test_track_state);
+    motion_position(22000);nav_wait(300);motion_label_hash(label,a);
+    motion_position(24000);nav_wait(300);motion_label_hash(label,b);assert(strcmp(a,b));
+    assert(lyrics_immersive_load(source,6,&revision)==5);
+    assert(!source[0].word_count&&source[1].word_count==3&&!source[2].word_count&&!source[3].word_count&&!source[4].word_count);
+    ui_np_fsart_close();lv_indev_delete(input);test_track_state.duration_ms=21000;
+    ui_update(&test_track_state);
+}
 static void review_lyrics_motion(const char *out){
     setenv("REVIEW_LYRICS_MOTION","1",1);setenv("NP_PLAYING","0",1);
     fixture=1;sd_io_init(media_local);assert(sd_io_resume());
     cfg_set_int_deferred("online_lyrics",0);cfg_set_int_deferred("online_art",0);
     cfg_set_int_deferred("lyrics_progressive",1);
+    cfg_set_int_deferred("lyrics_estimate_words",0); /* baseline exact-only fixtures below */
     cfg_set_int_deferred("onboarding_done",1);simple_cfg_set_int_deferred("imm_lyrics",1);
     simple_cfg_set_int_deferred("imm_style",2);simple_cfg_set_int_deferred("imm_scrub",0);
     screen_set_anim(0);screens_init();screen_show(SCR_NOWPLAYING);
@@ -924,6 +1021,52 @@ static void review_lyrics_motion(const char *out){
     if(th_disco_family()||th_null())disco_open_np_immersive();else ui_np_fsart_open();
     nav_wait(600);assert(ui_np_fsart_active());
     assert(find_text(immersive,motion_second));ui_np_fsart_close();lv_indev_delete(input);
+
+    /* The stock player can repeat a quantized timestamp in new a1 frames.
+     * Fractional LRC boundaries must be crossed once while playing, including
+     * when the next advancing report is slightly behind our prediction. */
+    const char *clock_text[]={"Clock first line","Clock fractional line","Clock advancing line","Clock final line"};
+    motion_sidecar("[00:01.00]Clock first line\n[00:03.10]Clock fractional line\n"
+                   "[00:04.10]Clock advancing line\n[00:08.00]Clock final line\n");
+    setenv("NP_PLAYING","0",1);test_track_state.state=1;ui_update(&test_track_state);
+    screen_set_anim(0);motion_position(3000);lyrics_open();first=motion_wait_text(clock_text[0]);
+    scroll=lv_obj_get_parent(lv_obj_get_parent(first));int clock_start=lv_obj_get_scroll_y(scroll);
+    int last_y=clock_start;screen_set_anim(1);
+    setenv("NP_PLAYING","1",1);test_track_state.state=2;ui_update(&test_track_state);
+    for(int i=1;i<=30;i++){
+        if(i%5==0)motion_position(3000); /* same time, fresh position sequence */
+        nav_wait(40);int y=lv_obj_get_scroll_y(scroll);
+        if(y<last_y)fprintf(stderr,"Standalone quantized clock rewound at frame %d: %d -> %d\n",i,last_y,y);
+        assert(y>=last_y);last_y=y;
+    }
+    assert(last_y>clock_start);
+    motion_position(4000);nav_wait(40);assert(lv_obj_get_scroll_y(scroll)>=last_y);
+    /* A genuinely decreasing report still honors a backward seek. */
+    motion_position(1500);nav_wait(40);assert(lv_obj_get_scroll_y(scroll)==clock_start);
+
+    setenv("NP_PLAYING","0",1);test_track_state.state=1;ui_update(&test_track_state);
+    screen_set_anim(0);motion_position(3000);nav_wait(100);
+    simple_cfg_set_int_deferred("imm_style",0); /* user's Vinyl renderer */
+    if(th_disco_family()||th_null())disco_open_np_immersive();
+    else {screen_show(SCR_NOWPLAYING);ui_np_fsart_open();}
+    for(int i=0;i<100;i++){lyrics_poll(NULL);nav_wait(10);usleep(1000);}
+    immersive=ui_action_find("imm.control");assert(immersive&&ui_np_fsart_active());
+    current=find_text(immersive,clock_text[0]);assert(current);
+    screen_set_anim(1);test_track_state.state=2;ui_update(&test_track_state);
+    setenv("NP_PLAYING","1",1);int last_line=0;
+    for(int i=1;i<=30;i++){
+        if(i%5==0)motion_position(3000);
+        nav_wait(40);int line=-1;
+        for(int j=0;j<4;j++)if(!strcmp(lv_label_get_text(current),clock_text[j]))line=j;
+        if(line<last_line)fprintf(stderr,"Immersive quantized clock rewound at frame %d: %d -> %d\n",i,last_line,line);
+        assert(line>=last_line);last_line=line;
+    }
+    assert(last_line==2);motion_frame(out,"immersive-vinyl-quantized");
+    motion_position(4000);nav_wait(40);assert(!strcmp(lv_label_get_text(current),clock_text[2]));
+    motion_position(1500);nav_wait(40);assert(!strcmp(lv_label_get_text(current),clock_text[0]));
+    setenv("NP_PLAYING","0",1);test_track_state.state=1;ui_update(&test_track_state);
+    screen_set_anim(0);ui_np_fsart_close();
+    review_estimated_lyrics(out);
     setlist_open("Display");settings_open_group("Text & layout");nav_wait(100);
     root=screen_get_root(SCR_SETLIST);
     for(int i=0;i<2;i++){
@@ -931,9 +1074,14 @@ static void review_lyrics_motion(const char *out){
         lv_obj_send_event(lv_obj_get_parent(toggle),LV_EVENT_CLICKED,NULL);
         assert(cfg_get_int("lyrics_progressive",-1)==i);nav_wait(40);
     }
+    for(int i=0;i<2;i++){
+        lv_obj_t *estimate=find_text(root,th_zune()?"estimate word timing":"Estimate word timing");assert(estimate);
+        lv_obj_send_event(lv_obj_get_parent(estimate),LV_EVENT_CLICKED,NULL);
+        assert(cfg_get_int("lyrics_estimate_words",-1)==i);nav_wait(40);
+    }
     lv_obj_t *toggle=find_text(root,th_zune()?"progressive lyrics":"Progressive lyrics");assert(toggle);
     lv_obj_scroll_to_view(lv_obj_get_parent(toggle),LV_ANIM_OFF);nav_wait(100);motion_frame(out,"settings");
-    puts("PASS: async lyrics, UTF-8 wraps, word sweeps, interpolated scrolling, pause freeze, exact tap seek, stale echo/track rejection, drag/hold suppression, reading hold, animation-off snap, plain/empty lyrics, Progressive lyrics setting and standalone/Immersive reopen");
+    puts("PASS: async lyrics, UTF-8 wraps, exact/estimated word sweeps, estimate toggle and unknown-end fallback, interpolated scrolling, pause freeze, exact tap seek, stale echo/track rejection, drag/hold suppression, reading hold, animation-off snap, plain/empty lyrics, lyric settings and standalone/Immersive reopen");
 }
 
 int main(int argc, char **argv){

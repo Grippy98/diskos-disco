@@ -7,5 +7,5 @@
 #define DISCO_NAME     "diskOS Disco!"
 #define DISCO_VERSION  "3.4.4"    /* this fork's own release, shown in Settings > About */
 /* Private test builds only: shown after the version in About ("Disco! 3.3.1 test5"). MUST be "" for a release. */
-#define DISCO_TEST_LABEL "lyrics-smb.1"
+#define DISCO_TEST_LABEL "lyrics-smb.2"
 #endif

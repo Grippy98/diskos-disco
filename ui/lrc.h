@@ -14,11 +14,13 @@
 #include <stddef.h>
 #include <string.h>
 #include "lyrics_timing.h"
+#include "lrc_estimate.h"
 
 typedef struct {
     long ms;
     int text;                       /* offset of NUL-terminated text in the text buffer */
-    int word_first, word_count;     /* slice of the caller's word array; zero count = line timing only */
+    int word_first, word_count;     /* caller's word slice; zero = no usable spans, see has_word_timing */
+    int has_word_timing;            /* source had an inline timestamp, even if its spans did not fit */
 } lrc_line_t;
 
 /* Shared bracket/angle timestamp syntax; callers check the opening delimiter. */
@@ -49,6 +51,18 @@ static long lrc_time_tag_end(const char *s, int *len, char end){
 
 /* "[mm:ss.xx]" at s (s[0] == '['): time in ms and tag length; -1 if invalid. */
 static long lrc_time_tag(const char *s, int *len){ return lrc_time_tag_end(s, len, ']'); }
+
+/* Preserve exact-timing provenance independently of output capacity. A later
+ * invalid tag must not make a partly enhanced line eligible for estimates. */
+static int lrc_has_word_timing(const char *src, int n){
+    for(int i = 0; i < n; i++){
+        if(src[i] == '<'){
+            int len = 0;
+            if(lrc_time_tag_end(src + i, &len, '>') >= 0 && len <= n - i) return 1;
+        }
+    }
+    return 0;
+}
 
 /* "[offset:-250]": 1 and the value in *ms if s is an offset tag */
 static int lrc_offset_tag(const char *s, long *ms, int *len){
@@ -183,6 +197,7 @@ static int lrc_parse_words(const char *src, lrc_line_t *lines, int maxl, char *t
         }
         int rest = (int)(s + ll - p);
         if(nt > 0){
+            int has_word_timing = lrc_has_word_timing(p, rest);
             int off = lrc_put_text(p, rest, text, tcap, &used);
             if(off < 0) break;
             int copies = nt < maxl - n ? nt : maxl - n;
@@ -215,6 +230,7 @@ static int lrc_parse_words(const char *src, lrc_line_t *lines, int maxl, char *t
                 lines[n].text = off;
                 lines[n].word_first = nw > 0 ? first_word + k * nw : 0;
                 lines[n].word_count = nw;
+                lines[n].has_word_timing = has_word_timing;
                 n++;
             }
         }
@@ -238,6 +254,46 @@ static int lrc_parse_words(const char *src, lrc_line_t *lines, int maxl, char *t
     if(synced) *synced = n >= 2;
     if(word_count) *word_count = wused;
     return n;
+}
+
+/* Optional post-parse fallback, called only when estimated timing is enabled.
+ * Appends complete estimated lines without changing any existing exact words
+ * or text. Parsed lines must be sorted and nonnegative; duplicate timestamps
+ * share the next strictly later boundary. Final lines use track_end_ms only
+ * when it is known and later than their start; <=0 leaves them line-only.
+ * Returns the number of newly estimated lines. A line that does not fit the
+ * remaining word buffer keeps its original zero word_count. Runtime views may
+ * instead use lrc_estimate_line_words with per-active-line scratch storage. */
+static int lrc_estimate_words(lrc_line_t *lines, int count, const char *text, int text_cap,
+                              lrc_word_t *words, int word_cap, int *word_count,
+                              long track_end_ms){
+    if(!lines || count <= 0 || !text || text_cap <= 0 || !words || !word_count ||
+       word_cap <= 0 || *word_count < 0 || *word_count > word_cap) return 0;
+    for(int i = 0; i < count; i++){
+        if(lines[i].ms < 0 || (i > 0 && lines[i].ms < lines[i - 1].ms) ||
+           lines[i].word_count < 0 || lines[i].word_first < 0 ||
+           lines[i].word_count > *word_count ||
+           lines[i].word_first > *word_count - lines[i].word_count) return 0;
+    }
+    int estimated = 0, used = *word_count;
+    for(int i = 0; i < count; ){
+        int next = i + 1;
+        while(next < count && lines[next].ms == lines[i].ms) next++;
+        long end = next < count ? lines[next].ms : track_end_ms;
+        for(int j = i; j < next; j++){
+            if(lines[j].word_count || lines[j].has_word_timing ||
+               lines[j].text < 0 || lines[j].text >= text_cap) continue;
+            int n = lrc_estimate_line_words(text + lines[j].text, text_cap - lines[j].text,
+                                            lines[j].ms, end, words + used, word_cap - used);
+            if(n > 0){
+                lines[j].word_first = used; lines[j].word_count = n;
+                used += n; estimated++;
+            }
+        }
+        i = next;
+    }
+    *word_count = used;
+    return estimated;
 }
 
 /* Legacy line/plain API: callers that do not request words have unchanged text

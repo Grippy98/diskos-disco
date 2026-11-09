@@ -35,6 +35,7 @@ static lv_obj_t *g_zcur, *g_znext, *g_zbig, *g_zhint, *g_ztop;
 static lrc_line_t g_ll[LY_MAXL];   /* the timed lines on screen (main thread only) */
 #define LY_MAX_WORDS 2048
 static lrc_word_t g_words[LY_MAX_WORDS];
+static lrc_word_t g_estimated_words[LYR_WORDS_MAX]; /* current line only; parsed timings stay unchanged */
 static int g_word_count;
 static lyrics_fx_t g_word_fx;
 static lv_timer_t *g_motion_timer;
@@ -57,12 +58,13 @@ static int g_lcur = -2;            /* highlighted line (-1 = before the first, -
 static int g_holding = 0;          /* the user scrolled: no auto-scroll until g_hold_until */
 static uint32_t g_hold_until = 0;
 static int32_t g_scroll_target = -1; /* the scroll position last asked for (-1 = none) */
-static unsigned g_last_pos_seq = 0;
-static long g_pos_base = 0;        /* last reported position (a1 frames arrive about once a second) */
-static uint32_t g_pos_tick = 0;    /* ...and when it arrived, to interpolate between frames */
+static long g_pos_base = 0;        /* displayed anchor; repeated quantized a1 frames do not reset it */
+static uint32_t g_pos_tick = 0;
 static long g_reported_position;
 static int g_clock_valid, g_clock_playing;
 static int g_progressive = -1;
+static int g_estimate_words = -1;
+static long g_estimate_duration;
 
 /* worker->main handoff guarded by a mutex (volatile gives no cross-thread memory
  * ordering - on the dual-core X2000 the main thread could see g_lready set before the
@@ -462,7 +464,8 @@ static int show_timed(const char *lrc)
     return 1;
 }
 
-/* the playback position now: the last reported one, plus the time since it arrived while playing (capped) */
+/* Interpolate changed position reports, preserving forward motion across
+ * quantized repeats. Explicit seeks and decreasing reports still rebase. */
 static long lyrics_position(void)
 {
     track_state_t st; ipc_get_state(&st);
@@ -478,17 +481,25 @@ static long lyrics_position(void)
     }
     /* A track-change message can precede its first position report. */
     if(st.path_seq && st.pos_seq <= st.path_seq) st.position_ms = 0;
-    if(!g_clock_valid || (!ignore_report && (st.pos_seq != g_last_pos_seq || st.position_ms != g_reported_position))){
-        g_last_pos_seq = st.pos_seq; g_reported_position = st.position_ms;
-        g_pos_base = st.position_ms; g_pos_tick = now; g_clock_valid = 1;
+    long est = g_pos_base;
+    if(g_clock_valid && g_clock_playing){
+        uint32_t d = now - g_pos_tick; est += d > 1500 ? 1500 : (long)d;
+    }
+    if(g_clock_valid && !ignore_report && est > g_reported_position && est - g_reported_position > 1500)
+        est = g_reported_position + 1500;
+    if(!g_clock_valid || (!ignore_report && st.position_ms != g_reported_position)){
+        long reported = st.position_ms;
+        /* A forward quantized report can trail our interpolation. Do not
+         * revisit the preceding lyric for that ordinary clock correction. */
+        if(g_clock_valid && playing && g_clock_playing && reported >= g_reported_position &&
+           reported < est && est - reported <= 1600) reported = est;
+        g_reported_position = st.position_ms;
+        g_pos_base = est = reported; g_pos_tick = now; g_clock_valid = 1;
     } else if(playing != g_clock_playing){
-        /* Freeze the interpolated position on pause, and resume from it. */
-        if(!playing){ uint32_t d = now - g_pos_tick; g_pos_base += d > 1500 ? 1500 : (long)d; }
-        g_pos_tick = now;
+        /* Freeze the displayed position on pause, and resume from it. */
+        g_pos_base = est; g_pos_tick = now;
     }
     g_clock_playing = playing;
-    long est = g_pos_base;
-    if(playing){ uint32_t d = now - g_pos_tick; est += d > 1500 ? 1500 : (long)d; }
     if(st.duration_ms > 0 && est > st.duration_ms) est = st.duration_ms;
     return est;
 }
@@ -498,14 +509,23 @@ static void lyrics_follow(void)
 {
     if(!g_nll || !g_lines_box) return;
     int progressive = cfg_get_int("lyrics_progressive", 1) != 0;
-    if(progressive != g_progressive){
+    int estimate = cfg_get_int("lyrics_estimate_words", 1) != 0;
+    track_state_t st; ipc_get_state(&st);
+    long duration = st.have_track && st.path_seq == g_identity_path_seq &&
+        !strcmp(st.path, g_path) && !strcmp(st.title, g_identity_title) ? st.duration_ms : 0;
+    if(duration < 0) duration = 0;
+    int end_changed = progressive && estimate && g_lcur >= 0 && g_lcur == g_nll - 1 &&
+        !g_ll[g_lcur].word_count && !g_ll[g_lcur].has_word_timing && duration != g_estimate_duration;
+    if(progressive != g_progressive || estimate != g_estimate_words || end_changed){
         lyrics_fx_unbind(&g_word_fx);
         if(g_lcur >= 0 && g_lcur < g_nll)
             lyric_emphasis(lv_obj_get_child(g_lines_box, g_lcur), 0, 0);
         lv_anim_delete(g_scroll, lyric_scroll_exec);
         g_lcur = -2; g_scroll_target = -1; g_follow_position = -1;
         g_progressive = progressive;
+        g_estimate_words = estimate;
     }
+    g_estimate_duration = duration;
     long position = lyrics_position();
     int idx = lrc_index_at(g_ll, g_nll, position);
     int discontinuity = g_follow_position >= 0 && (position < g_follow_position - 200 || position - g_follow_position > 1800);
@@ -520,8 +540,20 @@ static void lyrics_follow(void)
             lv_obj_t *label = lv_obj_get_child(g_lines_box, idx);
             lyric_emphasis(label, 1, sequential);
             lrc_line_t *line = &g_ll[idx];
-            if(progressive && line->word_count > 0 && line->word_first >= 0 && line->word_first + line->word_count <= g_word_count &&
-               lyrics_fx_bind(&g_word_fx, label, g_words + line->word_first, line->word_count, TC(TEXT_LYRICS))){
+            const lrc_word_t *words = NULL;
+            int count = 0;
+            if(line->word_count > 0 && line->word_first >= 0 && line->word_first + line->word_count <= g_word_count){
+                words = g_words + line->word_first; count = line->word_count;
+            } else if(progressive && estimate && !line->word_count && !line->has_word_timing){
+                long end = duration;
+                for(int i = idx + 1; i < g_nll; i++) if(g_ll[i].ms > line->ms){ end = g_ll[i].ms; break; }
+                if(duration > 0 && end > duration) end = duration;
+                count = lrc_estimate_line_words(g_ltext + line->text, (int)sizeof g_ltext - line->text,
+                    line->ms, end, g_estimated_words, LYR_WORDS_MAX);
+                words = g_estimated_words;
+            }
+            if(progressive && count > 0 &&
+               lyrics_fx_bind(&g_word_fx, label, words, count, TC(TEXT_LYRICS))){
                 lv_anim_delete(label, lyric_fade_exec);
                 lv_obj_set_style_text_color(label, TC(TEXT_MUTED), 0);
                 lv_obj_set_style_text_opa(label, LV_OPA_COVER, 0);
@@ -603,7 +635,7 @@ static void lyric_tap(lv_event_t *e)
         ui_book_user_seeked(target);
         g_seek_target = target; g_seek_sequence = st.pos_seq;
         g_pos_tick = lv_tick_get(); g_seek_until = g_pos_tick + 2500;
-        g_pos_base = target; g_last_pos_seq = st.pos_seq; g_reported_position = st.position_ms;
+        g_pos_base = target; g_reported_position = st.position_ms;
         g_clock_valid = 1; g_clock_playing = ui_is_playing();
         g_holding = 0; g_reading_touch = 0; g_scroll_target = -1;
         lyrics_follow();
@@ -805,10 +837,11 @@ static int timed_parse(const char *raw,lyr_line_t *out,int cap){
         memset(&out[i], 0, sizeof out[i]);
         out[i].ms=lines[i].ms;
         const char *s=text+lines[i].text;
-        size_t k=strlen(s); if(k>=sizeof out[i].text) k=sizeof out[i].text-1;
+        size_t full_len=strlen(s),k=full_len; if(k>=sizeof out[i].text) k=sizeof out[i].text-1;
         /* A truncated prefix ends at a complete UTF-8 codepoint. */
         while(k>0 && ((unsigned char)s[k]&0xC0)==0x80) k--;
         memcpy(out[i].text,s,k); out[i].text[k]=0;
+        out[i].estimate_blocked=lines[i].has_word_timing || full_len>k;
         int first = lines[i].word_first, count = lines[i].word_count;
         if(count > 0 && count <= LYR_WORDS_MAX && first >= 0 && first + count <= word_count){
             int valid = 1;

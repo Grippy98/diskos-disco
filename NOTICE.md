@@ -129,7 +129,8 @@ rebuild and relink `usbboot` against a modified libusb using the included source
   artwork for the UI. It is diskOS's own code (**GPL-3.0-or-later**) and statically embeds the unmodified
   `stb_image.h` v2.30 by Sean Barrett (dual licence, MIT or public domain, your choice; notice and licence
   text at the end of `ui/tools/stb_image.h`, pinned in `ui/tools/stb_image.VERSION`) and the static musl C
-  runtime (MIT). stb_image is NOT part of `mq_ui`.
+  runtime (MIT). The same decoder is also compiled into `mq_ui` through
+  `ui/artdec_inproc.c`; the stb_image license text is included in `licenses/LICENSE-stb_image.txt`.
 
   The built `mq_ui` binary statically incorporates these third-party components, whose licenses
   apply to the shipped binary (and whose source ships in `ui/` / `ui/lvgl/`):
@@ -142,7 +143,8 @@ rebuild and relink `usbboot` against a modified libusb using the included source
   | **SQLite** (amalgamation) | Public domain | https://sqlite.org/copyright.html |
   | **MD5** (Peslyak/Solar Designer) | Public domain | `ui/md5.c` |
   | **QR Code generator** (Nayuki `qrcodegen`) | MIT | `licenses/MIT-qrcodegen.txt` |
-  | **dr_flac** 0.13.4 (FLAC decoding for MA Sendspin) | Public domain (Unlicense) or MIT-0 | text at the end of `ui/vendor/dr_flac/dr_flac.h` |
+  | **stb_image** 2.30 (in-process album-art decoding) | MIT or public domain (Unlicense) | `licenses/LICENSE-stb_image.txt`; source in `ui/tools/stb_image.h` |
+  | **dr_flac** 0.13.4 (FLAC decoding for MA Sendspin) | Public domain (Unlicense) or MIT-0 | `licenses/LICENSE-dr_flac.txt`; source in `ui/vendor/dr_flac/dr_flac.h` |
   | **Monocypher** 4.0.2 (X25519, ChaCha20-Poly1305, SHA-512 for MA Sendspin's encryption and pairing) | BSD-2-Clause or CC0-1.0 | `licenses/BSD-2-Clause-CC0-Monocypher.txt`; unmodified source in `ui/vendor/monocypher/` |
   | **TJpgDec** (tiny JPEG decoder, via LVGL) | BSD-style (ChaN) | `licenses/LICENSE-TJpgDec.txt` |
   | **Montserrat** font (via LVGL built-in fonts) | SIL OFL 1.1 | `licenses/OFL-1.1-Montserrat.txt` |

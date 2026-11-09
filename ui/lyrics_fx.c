@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Timed lyric glyph clipping; shared by the list and Immersive renderers. */
 #include "lyrics_fx.h"
+#include "lvgl/src/misc/lv_area_private.h"
 #include "lvgl/src/misc/lv_text_private.h"
 #include <string.h>
 
